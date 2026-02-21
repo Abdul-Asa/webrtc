@@ -227,3 +227,158 @@ Infra:
 - Keep room/file/control-plane design unchanged
 - Swap only media transport from mesh to SFU (LiveKit/mediasoup/Janus)
 - Retain same user-facing room and call semantics
+
+## Current Build Status (Slice 1)
+
+- Implemented: `POST /api/rooms` create room
+- Implemented: `POST /api/rooms/:roomCode/join` join room with display name
+- Implemented: `GET /api/rooms/:roomCode/state` room snapshot
+- Implemented: `/ws` realtime presence channel with `room:state`, `member:joined`, `member:left`
+- Implemented: frontend room UI for create/join and live member online status
+
+## Architecture Diagram (Current Mesh-First Room Plan)
+
+```mermaid
+flowchart LR
+  subgraph Clients[Room Participants]
+    A[User A Browser]
+    B[User B Browser]
+    C[User C Browser]
+  end
+
+  H[Hono API + Signaling\nWebSocket Presence + Signaling]
+  DB[(Postgres\nRoom/Call/File Metadata)]
+  S3[(S3/R2/MinIO\nFile Objects)]
+  STUN[STUN/TURN]
+
+  A -. room + signaling .-> H
+  B -. room + signaling .-> H
+  C -. room + signaling .-> H
+
+  H --> DB
+  H --> S3
+
+  A <--> STUN
+  B <--> STUN
+  C <--> STUN
+
+  A <-->|WebRTC P2P| B
+  A <-->|WebRTC P2P| C
+  B <-->|WebRTC P2P| C
+```
+
+## Sequence Diagram (Create, Join, Presence)
+
+```mermaid
+sequenceDiagram
+  participant C1 as Client A
+  participant API as Hono Backend
+  participant C2 as Client B
+
+  C1->>API: POST /api/rooms
+  API-->>C1: roomCode
+
+  C1->>API: POST /api/rooms/{code}/join
+  API-->>C1: memberId + wsPath
+  C1->>API: WS connect (/ws?roomCode&memberId)
+  API-->>C1: room:state
+
+  C2->>API: POST /api/rooms/{code}/join
+  API-->>C2: memberId + wsPath
+  C2->>API: WS connect
+  API-->>C2: room:state
+  API-->>C1: member:joined
+
+  C2-->>API: disconnect
+  API-->>C1: member:left
+```
+
+## If This Were 1:1 Only (No Room Concept)
+
+What changes:
+- Replace room code + member list with direct session/call link
+- Exactly two participants, one peer connection
+- Presence is simpler: online/offline for the other person only
+- No need for room-wide broadcast events
+
+What stays the same:
+- Signaling backend still required (offer/answer/ICE)
+- STUN/TURN still required for NAT traversal reliability
+- Auth and abuse checks still required
+
+```mermaid
+flowchart LR
+  U1[Caller Browser] -. signaling .-> H1[Hono Signaling]
+  U2[Callee Browser] -. signaling .-> H1
+  U1 <-->|Single WebRTC Connection| U2
+  U1 <--> T1[STUN/TURN]
+  U2 <--> T1
+```
+
+## Why We Did Not Use SFU First
+
+- MVP speed: mesh lets us ship working calls quickly with fewer moving parts
+- Product uncertainty: early stage needs user flow validation more than infra scale
+- Cost and complexity: SFU adds media server ops, tuning, and observability burden
+- Scope fit: initial target is small active call groups (about 2-4)
+
+When we should switch:
+- Regular calls above 4-6 active video users
+- Need stronger quality consistency on weak networks/devices
+- Need advanced media controls (recording, layout policies, bandwidth adaptation)
+
+## How Teams / Google Meet Usually Do It (High Level)
+
+- They generally use SFU-based architectures, not full mesh for group calls
+- Each client sends one uplink to media infrastructure; SFU forwards selected streams
+- Heavy use of adaptive bitrate, simulcast/SVC, congestion control, and region routing
+- Large control plane handles auth, meeting policy, telemetry, and failure recovery
+- TURN and edge POP coverage are used aggressively for connectivity reliability
+
+```mermaid
+flowchart LR
+  subgraph Clients[Meeting Clients]
+    M1[User 1]
+    M2[User 2]
+    M3[User 3]
+    M4[User 4]
+  end
+
+  CP[Control Plane\nAuth, Signaling, Policies]
+  SFU[Media SFU Cluster]
+  TURN[TURN/Edge Relay]
+
+  M1 -. signaling .-> CP
+  M2 -. signaling .-> CP
+  M3 -. signaling .-> CP
+  M4 -. signaling .-> CP
+
+  M1 --> SFU
+  M2 --> SFU
+  M3 --> SFU
+  M4 --> SFU
+
+  SFU --> M1
+  SFU --> M2
+  SFU --> M3
+  SFU --> M4
+
+  M1 <--> TURN
+  M2 <--> TURN
+  M3 <--> TURN
+  M4 <--> TURN
+```
+
+## Advantages and Disadvantages of Our Mesh-First Method
+
+Advantages:
+- Fast to build and reason about
+- No media server needed on day one
+- Good for small groups and low initial infra cost
+- Clear migration path to SFU later if room/control design is clean
+
+Disadvantages:
+- Scales poorly as participants increase (CPU + upload cost per user)
+- Quality becomes inconsistent faster on mobile/weak networks
+- Harder to support larger meetings and advanced media features
+- Troubleshooting becomes harder as peer count and network variance grow
