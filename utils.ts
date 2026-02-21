@@ -1,7 +1,8 @@
 import type { Member, MemberSnapshot, Room, ServerEvent, SocketSession } from "./types.ts";
-import { isRecord } from "./shared.ts";
 
-export { isRecord };
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
 
 const ROOM_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const ROOM_CODE_LENGTH = 6;

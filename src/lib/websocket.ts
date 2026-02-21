@@ -1,7 +1,5 @@
-import type { RoomMember, ServerEvent } from "../types";
-import { isRecord } from "../shared";
-
-export { isRecord };
+import type { RoomMember, ServerEvent } from "../../types";
+import { isRecord } from "../../utils";
 
 export function normalizeRoomCode(value: string): string {
   return value.trim().toUpperCase();

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { Member, Room, SocketSession } from "./types.ts";
+import type { Room, SocketSession } from "./types.ts";
 import {
   broadcastRoom,
   createUniqueRoomCode,
@@ -10,13 +10,59 @@ import {
   sendEvent,
   touchMember,
   randomId,
-} from "./server-helpers.ts";
+} from "./utils.ts";
 
 const app = new Hono();
 const rooms = new Map<string, Room>();
 const activeSockets = new Map<string, Bun.ServerWebSocket<SocketSession>>();
+const pendingMemberRemovals = new Map<string, ReturnType<typeof setTimeout>>();
+const DISCONNECTED_MEMBER_TTL_MS = 10_000;
 
 const isMemberOnline = (memberId: string): boolean => activeSockets.has(memberId);
+
+const clearPendingMemberRemoval = (memberId: string): void => {
+  const timer = pendingMemberRemovals.get(memberId);
+
+  if (!timer) {
+    return;
+  }
+
+  clearTimeout(timer);
+  pendingMemberRemovals.delete(memberId);
+};
+
+const scheduleMemberRemoval = (roomCode: string, memberId: string): void => {
+  clearPendingMemberRemoval(memberId);
+
+  const timer = setTimeout(() => {
+    pendingMemberRemovals.delete(memberId);
+
+    if (activeSockets.has(memberId)) {
+      return;
+    }
+
+    const room = rooms.get(roomCode);
+    const member = room?.members.get(memberId);
+
+    if (!room || !member) {
+      return;
+    }
+
+    room.members.delete(memberId);
+
+    broadcastRoom(
+      room,
+      {
+        type: "room:state",
+        roomCode: room.code,
+        members: roomMembersSnapshot(room, isMemberOnline),
+      },
+      activeSockets,
+    );
+  }, DISCONNECTED_MEMBER_TTL_MS);
+
+  pendingMemberRemovals.set(memberId, timer);
+};
 
 app.get("/api/health", (c) => {
   return c.json({
@@ -63,15 +109,26 @@ app.post("/api/rooms/:roomCode/join", async (c) => {
     );
   }
 
-  const joinedAt = new Date().toISOString();
-  const member: Member = {
-    id: randomId("member"),
-    displayName,
-    joinedAt,
-    lastSeenAt: joinedAt,
-  };
+  const requestedMemberId =
+    typeof body.memberId === "string" ? body.memberId.trim() : "";
 
-  room.members.set(member.id, member);
+  let member = requestedMemberId ? room.members.get(requestedMemberId) : undefined;
+
+  if (member) {
+    member.displayName = displayName;
+    member.lastSeenAt = new Date().toISOString();
+    clearPendingMemberRemoval(member.id);
+  } else {
+    const joinedAt = new Date().toISOString();
+    member = {
+      id: randomId("member"),
+      displayName,
+      joinedAt,
+      lastSeenAt: joinedAt,
+    };
+
+    room.members.set(member.id, member);
+  }
 
   const wsPath = `/ws?roomCode=${encodeURIComponent(roomCode)}&memberId=${encodeURIComponent(member.id)}`;
 
@@ -156,6 +213,7 @@ Bun.serve<SocketSession>({
       }
 
       activeSockets.set(memberId, socket);
+      clearPendingMemberRemoval(memberId);
       touchMember(rooms, roomCode, memberId);
 
       sendEvent(socket, {
@@ -232,6 +290,8 @@ Bun.serve<SocketSession>({
         activeSockets,
         memberId,
       );
+
+      scheduleMemberRemoval(roomCode, memberId);
     },
   },
 });

@@ -26,7 +26,6 @@ export type SocketSession = {
 
 export type SocketStatus = "disconnected" | "connecting" | "connected";
 
-/** Alias for MemberSnapshot used in client UI */
 export type RoomMember = MemberSnapshot;
 
 export type CreateRoomResponse = {
