@@ -6,7 +6,7 @@ import { Button } from "./ui/button";
 export function Lobby() {
   const { username, setUsername, joinRoom, phase, error } = useCall();
   const [loading, setLoading] = useState<boolean>(false);
-  const [roomInput, setRoomInput] = useState("");
+  const [roomInput, setRoomInput] = useState("demo");
 
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -19,8 +19,8 @@ export function Lobby() {
   };
 
   return (
-    <main className="bg-gradient-animated flex min-h-screen items-center justify-center px-4">
-      <div className="glass-strong animate-fade-in w-full max-w-sm p-8 shadow-xl">
+    <main className="flex min-h-screen items-center justify-center px-4">
+      <div className="glass-strong animate-fade-in w-full max-w-sm p-8 shadow-xl pointer-events-auto">
         <div className="mb-6 space-y-2">
           <h1 className="text-2xl font-bold tracking-tight">Join a room</h1>
           <p className="text-sm text-muted-foreground">

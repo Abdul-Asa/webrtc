@@ -230,3 +230,33 @@
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid oklch(1 0 0 / 0.12);
 }
+
+/* Background ripple effect component */
+@keyframes cell-ripple {
+  0% {
+    opacity: 0.4;
+    transform: scale(0.95);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.02);
+  }
+  100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+}
+
+.animate-cell-ripple {
+  animation: cell-ripple var(--duration, 400ms) ease-out var(--delay, 0ms) forwards;
+}
+
+.mask-radial-from-20 {
+  mask-image: radial-gradient(ellipse 80% 80% at 50% 0%, black, transparent);
+  -webkit-mask-image: radial-gradient(ellipse 80% 80% at 50% 0%, black, transparent);
+}
+
+.mask-radial-at-top {
+  mask-position: center top;
+  -webkit-mask-position: center top;
+}

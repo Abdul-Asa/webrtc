@@ -1,73 +1,32 @@
-# React + TypeScript + Vite
+# WebRTC video call (React + Vite)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Multi-party video calling with a mesh of peer-to-peer connections. Max 4 people per room.
 
-Currently, two official plugins are available:
+## How it works (short)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **WebSocket** — Signalling only: join/leave room, who’s in the room, and exchanging SDP/ICE (offer, answer, candidates). No media over the socket.
+- **WebRTC** — All audio/video is peer-to-peer via [simple-peer](https://github.com/feross/simple-peer). Each participant has a direct connection to every other in the room.
+- **Signalling** — Custom JSON over WebSocket. One client is initiator per pair (`clientId < otherId`); they exchange offer → answer and ICE candidates until the P2P connection is up.
+- **ICE / STUN / TURN** — Trickle ICE is used. No custom ICE config: the app relies on the browser’s default (usually a public STUN server). No TURN server; add one if you need it for strict NATs.
 
-## React Compiler
+More details in the blog post (link TBD).
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+---
 
-## Expanding the ESLint configuration
+## Run
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+```bash
+# install
+bun install   # or npm install
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+# dev: terminal 1 – server
+bun run server.ts
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+# dev: terminal 2 – client
+bun run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Stack
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- **Client:** React, TypeScript, Vite, simple-peer, Tailwind/shadcn-style UI
+- **Server:** Bun, Hono, WebSocket on `/ws`
