@@ -8,6 +8,7 @@
     "dev:client": "vite",
     "dev:server": "bun --watch server.ts",
     "build": "tsc -b && vite build",
+    "start": "bun server.ts",
     "lint": "eslint .",
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",

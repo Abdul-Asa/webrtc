@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import type { ClientMessage, WsData } from "./src/types";
 
 const app = new Hono();
-const port = Number(process.env.SERVER_PORT ?? 3000);
+const port = Number(process.env.PORT ?? process.env.SERVER_PORT ?? 3000);
+const distRoot = new URL("dist/", import.meta.dir).pathname;
 
 const clientsById = new Map<string, Bun.ServerWebSocket<WsData>>();
 const roomByClientId = new Map<string, string>();
@@ -180,9 +181,29 @@ function handleMediaState(ws: Bun.ServerWebSocket<WsData>, isVideoEnabled: boole
   }
 }
 
+async function serveStatic(pathname: string): Promise<Response | null> {
+  if (pathname.includes("..")) return null;
+  const path = pathname === "/" ? "/index.html" : pathname;
+  const filePath = `${distRoot}${path.replace(/^\//, "")}`;
+  const file = Bun.file(filePath);
+  if (!(await file.exists())) return null;
+  return new Response(file, {
+    headers: { "Content-Type": getMime(path) },
+  });
+}
+
+function getMime(path: string): string {
+  if (path.endsWith(".html")) return "text/html; charset=utf-8";
+  if (path.endsWith(".js")) return "application/javascript";
+  if (path.endsWith(".css")) return "text/css";
+  if (path.endsWith(".ico")) return "image/x-icon";
+  if (path.endsWith(".svg")) return "image/svg+xml";
+  return "application/octet-stream";
+}
+
 const server = Bun.serve<WsData>({
   port,
-  fetch(request, bunServer) {
+  async fetch(request, bunServer) {
     const url = new URL(request.url);
 
     if (url.pathname === "/ws") {
@@ -202,6 +223,12 @@ const server = Bun.serve<WsData>({
       return new Response("WebSocket upgrade failed", { status: 400 });
     }
 
+    const staticResponse = await serveStatic(url.pathname);
+    if (staticResponse) return staticResponse;
+    if (request.method === "GET") {
+      const indexResponse = await serveStatic("/index.html");
+      if (indexResponse) return indexResponse;
+    }
     return app.fetch(request);
   },
   websocket: {
