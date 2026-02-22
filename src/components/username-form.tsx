@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useCall } from "../contexts/call-context";
+import { Input } from "./ui/input";
+import { Button } from "./ui/button";
 
 export function UsernameForm() {
   const { setUsername } = useCall();
@@ -14,30 +16,34 @@ export function UsernameForm() {
   };
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-4">
-      <div className="w-full space-y-6 rounded-lg border border-border p-6">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold">Join a call</h1>
-          <p className="text-sm text-muted-foreground">Enter your display name to get started.</p>
+    <main className="bg-gradient-animated flex min-h-screen items-center justify-center px-4">
+      <div className="glass-strong animate-fade-in w-full max-w-sm p-8 shadow-xl">
+        <div className="mb-6 space-y-2">
+          <h1 className="text-2xl font-bold tracking-tight">Join a call</h1>
+          <p className="text-sm text-muted-foreground">
+            Enter your display name to get started.
+          </p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <label className="flex flex-col gap-2">
-            <span className="text-sm font-medium">Display name</span>
-            <input
+            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Display name
+            </span>
+            <Input
               value={value}
               onChange={(e) => setValue(e.target.value)}
-              className="h-10 rounded-md border border-input bg-background px-3"
               placeholder="Your name"
               autoFocus
+              className="h-11 bg-white/5 border-white/10 placeholder:text-white/20 focus-visible:ring-primary/50"
             />
           </label>
-          <button
+          <Button
             type="submit"
             disabled={!value.trim()}
-            className="h-10 w-full rounded-md bg-primary px-4 text-primary-foreground disabled:opacity-60"
+            className="h-11 w-full text-sm font-semibold transition-all hover:shadow-lg hover:shadow-primary/20"
           >
             Continue
-          </button>
+          </Button>
         </form>
       </div>
     </main>

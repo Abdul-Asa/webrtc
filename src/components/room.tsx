@@ -18,10 +18,10 @@ export function Room() {
   const totalParticipants = 1 + peerEntries.length;
 
   return (
-    <main className="flex min-h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-border px-4 py-3">
-        <h1 className="text-sm font-medium">Room: {roomId}</h1>
-        <span className="text-xs text-muted-foreground">
+    <main className="flex h-screen flex-col bg-background">
+      <header className="glass flex items-center justify-between px-5 py-3">
+        <h1 className="text-sm font-semibold tracking-tight">{roomId}</h1>
+        <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
           {totalParticipants} participant{totalParticipants !== 1 ? "s" : ""}
         </span>
       </header>
@@ -29,7 +29,7 @@ export function Room() {
       <div className="flex flex-1 items-center justify-center p-4">
         <div
           className={cn(
-            "grid w-full max-w-5xl gap-3",
+            "grid w-full max-w-5xl gap-4 animate-fade-in",
             totalParticipants === 1 && "max-w-2xl grid-cols-1",
             totalParticipants === 2 && "grid-cols-1 md:grid-cols-2",
             totalParticipants >= 3 && "grid-cols-1 sm:grid-cols-2",
@@ -55,7 +55,7 @@ export function Room() {
         </div>
       </div>
 
-      <footer className="border-t border-border px-4 py-4">
+      <footer className="flex justify-center px-4 pb-6 pt-2">
         <ControlsBar />
       </footer>
     </main>

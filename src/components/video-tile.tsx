@@ -36,42 +36,49 @@ export function VideoTile({
     .slice(0, 2);
 
   return (
-    <div className="relative aspect-video w-full overflow-hidden rounded-md border border-border bg-black">
+    <div
+      className={cn(
+        "relative aspect-video w-full overflow-hidden rounded-sm bg-black/40 transition-shadow duration-300",
+        isLocal
+          ? "ring-1 ring-primary/30 shadow-lg shadow-primary/5"
+          : "ring-1 ring-white/5",
+      )}
+    >
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted={isLocal}
         className={cn(
-          "h-full w-full object-cover",
-          !isVideoEnabled && "hidden",
+          "h-full w-full object-cover transition-opacity duration-300",
+          !isVideoEnabled && "opacity-0 absolute",
         )}
       >
         <track kind="captions" />
       </video>
 
       {!isVideoEnabled && (
-        <div className="absolute inset-0 flex items-center justify-center bg-muted">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted-foreground/20 text-xl font-semibold text-muted-foreground">
+        <div className="absolute inset-0 flex items-center justify-center bg-secondary">
+          <div className="flex h-20 w-20 items-center justify-center rounded-full bg-linear-to-br from-primary/30 to-primary/10 text-2xl font-bold text-primary">
             {initials}
           </div>
         </div>
       )}
 
-      <div className="absolute bottom-0 left-0 right-0 flex items-center gap-2 bg-black/50 px-2 py-1">
-        <span className="truncate text-xs text-white">
+      <div className="absolute bottom-0 left-0 right-0 flex items-center gap-2 bg-linear-to-t from-black/60 via-black/30 to-transparent px-3 py-2.5">
+        <span className="truncate text-xs font-medium text-white/90">
           {username}{isLocal ? " (You)" : ""}
         </span>
-        <span className="ml-auto">
+        <div className="ml-auto flex items-center gap-1.5">
           {isAudioEnabled ? (
-            <Mic className="h-3 w-3 text-white" />
+            <Mic className="h-3.5 w-3.5 text-white/70" />
           ) : (
-            <MicOff className="h-3 w-3 text-red-400" />
+            <MicOff className="h-3.5 w-3.5 text-red-400" />
           )}
-        </span>
-        {!isVideoEnabled && (
-          <VideoOff className="h-3 w-3 text-red-400" />
-        )}
+          {!isVideoEnabled && (
+            <VideoOff className="h-3.5 w-3.5 text-red-400" />
+          )}
+        </div>
       </div>
     </div>
   );
