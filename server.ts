@@ -1,9 +1,10 @@
+import path from "node:path";
 import { Hono } from "hono";
 import type { ClientMessage, WsData } from "./src/types";
 
 const app = new Hono();
 const port = Number(process.env.PORT ?? process.env.SERVER_PORT ?? 3000);
-const distRoot = new URL("dist/", import.meta.dir).pathname;
+const distRoot = path.join(import.meta.dir, "dist");
 
 const clientsById = new Map<string, Bun.ServerWebSocket<WsData>>();
 const roomByClientId = new Map<string, string>();
@@ -183,12 +184,12 @@ function handleMediaState(ws: Bun.ServerWebSocket<WsData>, isVideoEnabled: boole
 
 async function serveStatic(pathname: string): Promise<Response | null> {
   if (pathname.includes("..")) return null;
-  const path = pathname === "/" ? "/index.html" : pathname;
-  const filePath = `${distRoot}${path.replace(/^\//, "")}`;
+  const subPath = pathname === "/" ? "index.html" : pathname.replace(/^\//, "");
+  const filePath = path.join(distRoot, subPath);
   const file = Bun.file(filePath);
   if (!(await file.exists())) return null;
   return new Response(file, {
-    headers: { "Content-Type": getMime(path) },
+    headers: { "Content-Type": getMime(subPath) },
   });
 }
 
