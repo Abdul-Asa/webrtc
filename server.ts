@@ -1,297 +1,264 @@
 import { Hono } from "hono";
-import type { Room, SocketSession } from "./types.ts";
-import {
-  broadcastRoom,
-  createUniqueRoomCode,
-  isRecord,
-  memberSnapshot,
-  roomMembersSnapshot,
-  sanitizeDisplayName,
-  sendEvent,
-  touchMember,
-  randomId,
-} from "./utils.ts";
+import type { ClientMessage, WsData } from "./src/types";
 
 const app = new Hono();
-const rooms = new Map<string, Room>();
-const activeSockets = new Map<string, Bun.ServerWebSocket<SocketSession>>();
-const pendingMemberRemovals = new Map<string, ReturnType<typeof setTimeout>>();
-const DISCONNECTED_MEMBER_TTL_MS = 10_000;
+const port = Number(process.env.SERVER_PORT ?? 3000);
 
-const isMemberOnline = (memberId: string): boolean => activeSockets.has(memberId);
+const clientsById = new Map<string, Bun.ServerWebSocket<WsData>>();
+const roomByClientId = new Map<string, string>();
+const membersByRoom = new Map<string, Set<string>>();
 
-const clearPendingMemberRemoval = (memberId: string): void => {
-  const timer = pendingMemberRemovals.get(memberId);
+function send(ws: Bun.ServerWebSocket<WsData>, payload: unknown): void {
+  ws.send(JSON.stringify(payload));
+}
 
-  if (!timer) {
+function parseClientMessage(rawMessage: string): ClientMessage | null {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(rawMessage);
+  } catch {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== "object" || !("type" in parsed)) {
+    return null;
+  }
+
+  const obj = parsed as Record<string, unknown>;
+
+  if (obj.type === "join") {
+    if (typeof obj.roomId !== "string" || typeof obj.username !== "string") {
+      return null;
+    }
+    return { type: "join", roomId: obj.roomId, username: obj.username };
+  }
+
+  if (obj.type === "signal") {
+    if (typeof obj.to !== "string" || obj.data === undefined) {
+      return null;
+    }
+    return { type: "signal", to: obj.to, data: obj.data };
+  }
+
+  if (obj.type === "media_state") {
+    if (typeof obj.isVideoEnabled !== "boolean" || typeof obj.isAudioEnabled !== "boolean") {
+      return null;
+    }
+    return { type: "media_state", isVideoEnabled: obj.isVideoEnabled, isAudioEnabled: obj.isAudioEnabled };
+  }
+
+  return null;
+}
+
+function removeClientFromRoom(clientId: string): string | null {
+  const currentRoomId = roomByClientId.get(clientId);
+
+  if (!currentRoomId) {
+    return null;
+  }
+
+  const members = membersByRoom.get(currentRoomId);
+
+  if (!members) {
+    roomByClientId.delete(clientId);
+    return currentRoomId;
+  }
+
+  members.delete(clientId);
+  roomByClientId.delete(clientId);
+
+  if (members.size === 0) {
+    membersByRoom.delete(currentRoomId);
+  }
+
+  return currentRoomId;
+}
+
+function handleJoin(ws: Bun.ServerWebSocket<WsData>, roomId: string, username: string): void {
+  const normalizedRoomId = roomId.trim();
+
+  if (!normalizedRoomId) {
+    send(ws, { type: "error", message: "Room is required" });
     return;
   }
 
-  clearTimeout(timer);
-  pendingMemberRemovals.delete(memberId);
-};
+  removeClientFromRoom(ws.data.clientId);
 
-const scheduleMemberRemoval = (roomCode: string, memberId: string): void => {
-  clearPendingMemberRemoval(memberId);
+  const members = membersByRoom.get(normalizedRoomId) ?? new Set<string>();
 
-  const timer = setTimeout(() => {
-    pendingMemberRemovals.delete(memberId);
-
-    if (activeSockets.has(memberId)) {
-      return;
-    }
-
-    const room = rooms.get(roomCode);
-    const member = room?.members.get(memberId);
-
-    if (!room || !member) {
-      return;
-    }
-
-    room.members.delete(memberId);
-
-    broadcastRoom(
-      room,
-      {
-        type: "room:state",
-        roomCode: room.code,
-        members: roomMembersSnapshot(room, isMemberOnline),
-      },
-      activeSockets,
-    );
-  }, DISCONNECTED_MEMBER_TTL_MS);
-
-  pendingMemberRemovals.set(memberId, timer);
-};
-
-app.get("/api/health", (c) => {
-  return c.json({
-    ok: true,
-    runtime: "bun",
-    framework: "hono",
-    rooms: rooms.size,
-  });
-});
-
-app.post("/api/rooms", (c) => {
-  const roomCode = createUniqueRoomCode(rooms);
-  const createdAt = new Date().toISOString();
-
-  rooms.set(roomCode, {
-    code: roomCode,
-    createdAt,
-    members: new Map(),
-  });
-
-  return c.json({ roomCode, createdAt }, 201);
-});
-
-app.post("/api/rooms/:roomCode/join", async (c) => {
-  const roomCode = c.req.param("roomCode").toUpperCase();
-  const room = rooms.get(roomCode);
-
-  if (!room) {
-    return c.json({ error: "Room not found" }, 404);
+  if (!membersByRoom.has(normalizedRoomId)) {
+    membersByRoom.set(normalizedRoomId, members);
   }
 
-  const body = await c.req.json().catch(() => ({}));
-
-  if (!isRecord(body)) {
-    return c.json({ error: "Invalid JSON body" }, 400);
+  if (members.size >= 4) {
+    send(ws, { type: "error", message: "Room is full (max 4)" });
+    return;
   }
 
-  const displayName = sanitizeDisplayName(body.displayName);
+  ws.data.username = username;
 
-  if (!displayName) {
-    return c.json(
-      { error: "displayName must be between 2 and 32 characters" },
-      400,
-    );
-  }
-
-  const requestedMemberId =
-    typeof body.memberId === "string" ? body.memberId.trim() : "";
-
-  let member = requestedMemberId ? room.members.get(requestedMemberId) : undefined;
-
-  if (member) {
-    member.displayName = displayName;
-    member.lastSeenAt = new Date().toISOString();
-    clearPendingMemberRemoval(member.id);
-  } else {
-    const joinedAt = new Date().toISOString();
-    member = {
-      id: randomId("member"),
-      displayName,
-      joinedAt,
-      lastSeenAt: joinedAt,
+  const peers = [...members].map((memberId) => {
+    const memberSocket = clientsById.get(memberId)!;
+    return {
+      clientId: memberId,
+      username: memberSocket.data.username,
+      isVideoEnabled: memberSocket.data.isVideoEnabled,
+      isAudioEnabled: memberSocket.data.isAudioEnabled,
     };
-
-    room.members.set(member.id, member);
-  }
-
-  const wsPath = `/ws?roomCode=${encodeURIComponent(roomCode)}&memberId=${encodeURIComponent(member.id)}`;
-
-  return c.json(
-    {
-      roomCode,
-      member: memberSnapshot(member, isMemberOnline(member.id)),
-      wsPath,
-    },
-    201,
-  );
-});
-
-app.get("/api/rooms/:roomCode/state", (c) => {
-  const roomCode = c.req.param("roomCode").toUpperCase();
-  const room = rooms.get(roomCode);
-
-  if (!room) {
-    return c.json({ error: "Room not found" }, 404);
-  }
-
-  return c.json({
-    roomCode,
-    createdAt: room.createdAt,
-    members: roomMembersSnapshot(room, isMemberOnline),
   });
-});
 
-const port = Number(process.env.PORT ?? 3000);
+  members.add(ws.data.clientId);
+  roomByClientId.set(ws.data.clientId, normalizedRoomId);
 
-console.log(`Hono server running on http://localhost:${port}`);
+  send(ws, {
+    type: "joined",
+    roomId: normalizedRoomId,
+    clientId: ws.data.clientId,
+    peers,
+  });
 
-Bun.serve<SocketSession>({
+  for (const memberId of [...members]) {
+    if (memberId === ws.data.clientId) continue;
+    const memberSocket = clientsById.get(memberId);
+    if (memberSocket) {
+      send(memberSocket, {
+        type: "peer_joined",
+        clientId: ws.data.clientId,
+        username: ws.data.username,
+        isVideoEnabled: ws.data.isVideoEnabled,
+        isAudioEnabled: ws.data.isAudioEnabled,
+      });
+    }
+  }
+}
+
+function handleSignal(ws: Bun.ServerWebSocket<WsData>, to: string, data: unknown): void {
+  const targetSocket = clientsById.get(to);
+
+  if (!targetSocket) {
+    send(ws, { type: "error", message: "Peer is not connected" });
+    return;
+  }
+
+  const fromRoom = roomByClientId.get(ws.data.clientId);
+  const toRoom = roomByClientId.get(to);
+
+  if (!fromRoom || fromRoom !== toRoom) {
+    send(ws, { type: "error", message: "Peer is not in your room" });
+    return;
+  }
+
+  send(targetSocket, {
+    type: "signal",
+    from: ws.data.clientId,
+    data,
+  });
+}
+
+function handleMediaState(ws: Bun.ServerWebSocket<WsData>, isVideoEnabled: boolean, isAudioEnabled: boolean): void {
+  ws.data.isVideoEnabled = isVideoEnabled;
+  ws.data.isAudioEnabled = isAudioEnabled;
+
+  const roomId = roomByClientId.get(ws.data.clientId);
+  if (!roomId) return;
+
+  const members = membersByRoom.get(roomId);
+  if (!members) return;
+
+  for (const memberId of members) {
+    if (memberId === ws.data.clientId) continue;
+    const memberSocket = clientsById.get(memberId);
+    if (memberSocket) {
+      send(memberSocket, {
+        type: "peer_media_state",
+        clientId: ws.data.clientId,
+        isVideoEnabled,
+        isAudioEnabled,
+      });
+    }
+  }
+}
+
+const server = Bun.serve<WsData>({
   port,
-  fetch(request, server) {
+  fetch(request, bunServer) {
     const url = new URL(request.url);
 
     if (url.pathname === "/ws") {
-      const roomCode = url.searchParams.get("roomCode")?.toUpperCase() ?? "";
-      const memberId = url.searchParams.get("memberId") ?? "";
+      const upgraded = bunServer.upgrade(request, {
+        data: {
+          clientId: crypto.randomUUID(),
+          username: "",
+          isVideoEnabled: true,
+          isAudioEnabled: true,
+        },
+      });
 
-      const room = rooms.get(roomCode);
-      const member = room?.members.get(memberId);
-
-      if (!room || !member) {
-        return new Response("Invalid room or member", { status: 400 });
-      }
-
-      if (server.upgrade(request, { data: { roomCode, memberId } })) {
+      if (upgraded) {
         return;
       }
 
-      return new Response("WebSocket upgrade failed", { status: 500 });
+      return new Response("WebSocket upgrade failed", { status: 400 });
     }
 
     return app.fetch(request);
   },
   websocket: {
-    open(socket) {
-      const { roomCode, memberId } = socket.data;
-      const room = rooms.get(roomCode);
+    open(ws) {
+      clientsById.set(ws.data.clientId, ws);
+    },
+    message(ws, message) {
+      const rawMessage = typeof message === "string" ? message : Buffer.from(message).toString();
+      const parsed = parseClientMessage(rawMessage);
 
-      if (!room) {
-        sendEvent(socket, { type: "error", message: "Room no longer exists" });
-        socket.close(1008, "Room not found");
+      if (!parsed) {
+        send(ws, { type: "error", message: "Invalid message" });
         return;
       }
 
-      const member = room.members.get(memberId);
-
-      if (!member) {
-        sendEvent(socket, { type: "error", message: "Member not found" });
-        socket.close(1008, "Member not found");
+      if (parsed.type === "join") {
+        handleJoin(ws, parsed.roomId, parsed.username);
         return;
       }
 
-      const existingSocket = activeSockets.get(memberId);
-      const wasOnline = Boolean(existingSocket);
-
-      if (existingSocket && existingSocket !== socket) {
-        existingSocket.close(4001, "Superseded by a newer connection");
+      if (parsed.type === "signal") {
+        handleSignal(ws, parsed.to, parsed.data);
+        return;
       }
 
-      activeSockets.set(memberId, socket);
-      clearPendingMemberRemoval(memberId);
-      touchMember(rooms, roomCode, memberId);
-
-      sendEvent(socket, {
-        type: "room:state",
-        roomCode,
-        members: roomMembersSnapshot(room, isMemberOnline),
-      });
-
-      if (!wasOnline) {
-        broadcastRoom(
-          room,
-          {
-            type: "member:joined",
-            member: memberSnapshot(member, true),
-          },
-          activeSockets,
-          memberId,
-        );
+      if (parsed.type === "media_state") {
+        handleMediaState(ws, parsed.isVideoEnabled, parsed.isAudioEnabled);
+        return;
       }
     },
-    message(socket, message) {
-      if (typeof message !== "string") {
+    close(ws) {
+      clientsById.delete(ws.data.clientId);
+
+      const roomId = removeClientFromRoom(ws.data.clientId);
+
+      if (!roomId) {
         return;
       }
 
-      let payload: unknown;
+      const members = membersByRoom.get(roomId);
 
-      try {
-        payload = JSON.parse(message);
-      } catch {
+      if (!members) {
         return;
       }
 
-      if (!isRecord(payload) || payload.type !== "presence:ping") {
-        return;
+      for (const memberId of members) {
+        const memberSocket = clientsById.get(memberId);
+
+        if (memberSocket) {
+          send(memberSocket, {
+            type: "peer_left",
+            clientId: ws.data.clientId,
+          });
+        }
       }
-
-      const updatedAt = touchMember(rooms, socket.data.roomCode, socket.data.memberId);
-
-      sendEvent(socket, {
-        type: "presence:pong",
-        at: updatedAt,
-      });
-    },
-    close(socket) {
-      const { roomCode, memberId } = socket.data;
-
-      if (activeSockets.get(memberId) !== socket) {
-        return;
-      }
-
-      activeSockets.delete(memberId);
-
-      const room = rooms.get(roomCode);
-
-      if (!room) {
-        return;
-      }
-
-      const member = room.members.get(memberId);
-
-      if (!member) {
-        return;
-      }
-
-      touchMember(rooms, roomCode, memberId);
-
-      broadcastRoom(
-        room,
-        {
-          type: "member:left",
-          member: memberSnapshot(member, false),
-        },
-        activeSockets,
-        memberId,
-      );
-
-      scheduleMemberRemoval(roomCode, memberId);
     },
   },
 });
+
+console.log(`Hono server running on http://localhost:${server.port}`);
