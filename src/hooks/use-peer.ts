@@ -4,8 +4,6 @@ import type { CallPhase, PeerInfo } from "../types";
 import { parseServerMessage } from "../lib/parse-messages";
 import { wsUrl } from "../lib/utils";
 
-const MAX_ROOM_SIZE = 4;
-
 type UsePeerOptions = {
   username: string;
   localStream: MediaStream | null;
@@ -24,8 +22,9 @@ export function usePeer({ username, localStream }: UsePeerOptions) {
   const myIdRef = useRef<string | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
 
-  // Keep localStream ref in sync
-  localStreamRef.current = localStream;
+  useEffect(() => {
+    localStreamRef.current = localStream;
+  }, [localStream]);
 
   const addRemoteStream = useCallback((peerId: string, stream: MediaStream) => {
     setRemoteStreams((prev) => {
@@ -233,15 +232,17 @@ export function usePeer({ username, localStream }: UsePeerOptions) {
 
   // Cleanup on unmount
   useEffect(() => {
+    const socket = socketRef.current;
+    const peersMap = peersRef.current;
     return () => {
-      if (socketRef.current) {
-        socketRef.current.close();
+      if (socket) {
+        socket.close();
         socketRef.current = null;
       }
-      for (const peer of peersRef.current.values()) {
+      for (const peer of peersMap.values()) {
         peer.destroy();
       }
-      peersRef.current.clear();
+      peersMap.clear();
     };
   }, []);
 
